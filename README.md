@@ -2,6 +2,7 @@
 Dynamic Island, but Music Only and for Linux Mint XFCE Edition (thats where i made it)
 
 I TRIED THIS AND ONLY TESTED IT WITH YouTube Music (website version in firefox: https://music.youtube.com/)
+AND GUYS DONT BE MAD BUT I USED GEMINI AI (HATE ME ALL YOU WANT)
 
 ## Requirements
 
