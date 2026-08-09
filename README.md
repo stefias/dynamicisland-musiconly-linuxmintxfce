@@ -6,6 +6,8 @@ I TRIED THIS AND ONLY TESTED IT WITH YouTube Music (website version in firefox: 
 
 **Note:** The time could be a bit glitched, but just pause the music in the Dynamic Island then play it again to fix it.
 
+**virustotal.com results: https://www.virustotal.com/gui/file/2bd4fd656e8ea40d1355c40037a3ee36d0b2573b5b173a92ce944d2810e5a120?nocache=1**
+
 ## Requirements
 
 ### Software Dependencies
