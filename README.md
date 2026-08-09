@@ -30,3 +30,6 @@ pip install PyQt5 dbus-python
 ```bash
 python3 island.py
 ```
+## Credits & Contributors
+* **stefias** - Creator & Lead Developer (Vibe Coder)
+* **Gemini** - AI Assistant (helped with code debugging and structure)
