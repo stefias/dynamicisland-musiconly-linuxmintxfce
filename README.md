@@ -2,15 +2,23 @@
 Dynamic Island, but Music Only and for Linux Mint XFCE Edition (thats where i made it)
 
 I TRIED THIS AND ONLY TESTED IT WITH YouTube Music (website version in firefox: https://music.youtube.com/)
-AND GUYS DONT BE MAD BUT I USED GEMINI AI (HATE ME ALL YOU WANT)
-AND ALSO THE TIME COULD BE A BIT GLITCHED BUT JUST PAUSE THE MUSIC IN THE DYNAMIC ISLAND THEN PLAY IT AGAIN.
+**AND GUYS DONT BE MAD BUT I USED GEMINI AI (HATE ME ALL YOU WANT)**
+
+**Note:** The time could be a bit glitched, but just pause the music in the Dynamic Island then play it again to fix it.
 
 ## Requirements
 
-To run this script, you will need:
+### Software Dependencies
 * **Python 3**
 * **PyQt5**
 * **dbus-python**
+
+### PC Requirements
+* **CPU:** Any multi-core processor (virtually zero CPU usage)
+* **RAM:** 1 GB or higher
+* **Storage:** Less than 10 MB free space
+* **OS:** Linux (tested on Linux Mint XFCE Edition with active D-Bus session)
+* **Media Player:** An MPRIS-compatible player or browser session (e.g., Firefox with YouTube Music)
 
 ## Installation
 
