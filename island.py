@@ -4,7 +4,7 @@ import urllib.parse
 import urllib.request
 import random
 import dbus
-from PyQt5.QtCore import Qt, QPropertyAnimation, QRect, QRectF, QEasingCurve, QTimer, QByteArray, QSize
+from PyQt5.QtCore import Qt, QPropertyAnimation, QRect, QRectF, QEasingCurve, QTimer, QSize
 import faulthandler
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QPushButton
 from PyQt5.QtGui import QPainter, QColor, QPixmap, QImage, QFont, QPainterPath, QLinearGradient, QPen
@@ -22,7 +22,6 @@ class AnimatedWaveform(QWidget):
         self.color2 = QColor(140, 70, 160)
 
     def set_colors(self, c1, c2):
-        print(f"[Color Debug] Waveform colors updated to {c1.name()} and {c2.name()}")
         self.color1 = c1
         self.color2 = c2
         self.update()
@@ -144,15 +143,16 @@ class SimpleDynamicIsland(QWidget):
         self.is_expanded = False
         self.is_animating = False
         
+        self.track_id = ""
         self.track_title = "Entropy"
         self.track_artist = "Beach Bunny"
         self.art_url = ""
+        self.art_request_id = 0
         self.track_length = 0
         self.current_position = 0
         self.current_position_float = 0.0
         self.cached_pixmap = None
         self.is_playing = False
-        self.track_id = "/"
         
         self.setup_ui()
         
@@ -229,12 +229,7 @@ class SimpleDynamicIsland(QWidget):
             
             metadata = props.Get('org.mpris.MediaPlayer2.Player', 'Metadata')
             
-            # --- DIAGNOSTIC METADATA DUMP ---
-            print("\n=== MPRIS METADATA BROADCAST ===")
-            for k, v in metadata.items():
-                print(f"  Key: {k} -> Value: {v}")
-            print("================================\n")
-
+            new_track_id = str(metadata.get('mpris:trackid', ''))
             new_title = str(metadata.get('xesam:title', 'Unknown'))
             artists = metadata.get('xesam:artist', ['Unknown'])
             new_artist = str(artists[0]) if artists else 'Unknown'
@@ -264,62 +259,64 @@ class SimpleDynamicIsland(QWidget):
                 self.btn_play.update()
                 self.wave_widget.stop_animation()
 
-            if new_title != self.track_title or new_artist != self.track_artist or (new_art and new_art != self.art_url):
+            # Handle track and art updates robustly on track change
+            track_changed = (new_track_id != self.track_id)
+            if track_changed or new_title != self.track_title or new_artist != self.track_artist:
+                self.track_id = new_track_id
                 self.track_title = new_title
                 self.track_artist = new_artist
-                if new_art and new_art != self.art_url:
-                    self.art_url = new_art
-                    self.load_album_art()
-                elif not self.cached_pixmap and new_art:
-                    self.art_url = new_art
-                    self.load_album_art()
-                
-                if self.is_expanded:
-                    self.art_label.setPixmap(self.get_rounded_pixmap(76, 20))
-                    self.update_progress_ui()
-                else:
-                    self.art_label.setPixmap(self.get_rounded_pixmap(26, 6))
-            
+
+            if track_changed or (new_art and new_art != self.art_url):
+                self.art_url = new_art
+                self.art_request_id += 1
+                self.load_album_art(self.art_request_id)
+            elif not new_art and track_changed:
+                self.art_url = ""
+                self.cached_pixmap = None
+                self.wave_widget.set_colors(QColor(220, 150, 240), QColor(140, 70, 160))
+
             if self.is_expanded:
+                self.art_label.setPixmap(self.get_rounded_pixmap(76, 20))
                 self.update_progress_ui()
+            else:
+                self.art_label.setPixmap(self.get_rounded_pixmap(26, 6))
                 
         except Exception as e:
             print(f"[Error in poll_media]: {e}")
 
-    def load_album_art(self):
+    def load_album_art(self, req_id):
         try:
-            print(f"[Art Load] Attempting to fetch URL: '{self.art_url}'")
             if not self.art_url:
-                print("[Art Load] Error: art_url is empty.")
+                self.cached_pixmap = None
                 return
 
+            loaded_pixmap = None
             if self.art_url.startswith('file://'):
                 path = urllib.parse.unquote(self.art_url[7:])
-                print(f"[Art Load] Local file parsed path: {path}")
                 img = QImage(path)
                 if not img.isNull():
-                    self.cached_pixmap = QPixmap.fromImage(img)
+                    loaded_pixmap = QPixmap.fromImage(img)
             elif self.art_url.startswith('http://') or self.art_url.startswith('https://'):
-                print("[Art Load] Downloading remote image...")
                 req = urllib.request.Request(self.art_url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req, timeout=3) as response:
                     data = response.read()
                     img = QImage()
-                    img.loadFromData(QByteArray(data))
-                    if not img.isNull():
-                        self.cached_pixmap = QPixmap.fromImage(img)
+                    if img.loadFromData(data):
+                        loaded_pixmap = QPixmap.fromImage(img)
             else:
-                print(f"[Art Load] Attempting direct path: {self.art_url}")
                 img = QImage(self.art_url)
                 if not img.isNull():
-                    self.cached_pixmap = QPixmap.fromImage(img)
+                    loaded_pixmap = QPixmap.fromImage(img)
             
-            if self.cached_pixmap and not self.cached_pixmap.isNull():
-                print(f"[Art Load] Success! Pixmap dimensions: {self.cached_pixmap.width()}x{self.cached_pixmap.height()}")
+            if req_id != self.art_request_id:
+                return
+
+            if loaded_pixmap and not loaded_pixmap.isNull():
+                self.cached_pixmap = loaded_pixmap
                 c1, c2 = self.extract_colors_from_pixmap()
                 self.wave_widget.set_colors(c1, c2)
             else:
-                print("[Art Load] Failed: QImage loaded a null image.")
+                self.cached_pixmap = None
 
             if self.is_expanded:
                 self.art_label.setPixmap(self.get_rounded_pixmap(76, 20))
@@ -327,6 +324,12 @@ class SimpleDynamicIsland(QWidget):
                 self.art_label.setPixmap(self.get_rounded_pixmap(26, 6))
         except Exception as e:
             print(f"[Art Load Exception]: {e}")
+            if req_id == self.art_request_id:
+                self.cached_pixmap = None
+                if self.is_expanded:
+                    self.art_label.setPixmap(self.get_rounded_pixmap(76, 20))
+                else:
+                    self.art_label.setPixmap(self.get_rounded_pixmap(26, 6))
 
     def extract_colors_from_pixmap(self):
         if not self.cached_pixmap or self.cached_pixmap.isNull():
@@ -367,13 +370,12 @@ class SimpleDynamicIsland(QWidget):
     def get_rounded_pixmap(self, size, radius):
         if not self.cached_pixmap or self.cached_pixmap.isNull():
             target = QPixmap(size, size)
-            target.fill(QColor(15, 15, 15))
+            target.fill(QColor(30, 30, 30))
             return target
             
-        target_size = QSize(size * 2, size * 2)
         scaled = self.cached_pixmap.scaled(
-            target_size, 
-            Qt.KeepAspectRatioByExpanding, 
+            QSize(size, size), 
+            Qt.KeepAspectRatio, 
             Qt.SmoothTransformation
         )
         
@@ -387,7 +389,10 @@ class SimpleDynamicIsland(QWidget):
         path = QPainterPath()
         path.addRoundedRect(0, 0, size, size, radius, radius)
         painter.setClipPath(path)
-        painter.drawPixmap(0, 0, size, size, scaled)
+        
+        dx = (size - scaled.width()) // 2
+        dy = (size - scaled.height()) // 2
+        painter.drawPixmap(dx, dy, scaled)
         painter.end()
         return target
 
