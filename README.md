@@ -48,6 +48,37 @@ Or, if you renamed the .py file, you can install it using:
 ```bash
 python3 yourrenamedfilesname.py
 ```
+## 🚀 Quick Command Shortcut
+
+If you want to launch the Dynamic Island by typing a short command (like `island`) from anywhere in your terminal instead of typing `python3 island.py`, you can set up a shell alias.
+
+### Setup Instructions
+
+1. Open your shell configuration file in a text editor:
+   ```bash
+   nano ~/.bashrc
+
+*(Note: If you use Zsh, open `~/.zshrc` instead)*
+
+2. Scroll to the bottom of the file and add the following alias (make sure to update `/path/to/your/island.py` to your actual file path):
+   ```bash
+   alias island='python3 /path/to/your/island.py'
+   ```
+
+3. Save and exit the editor:
+   * Press **Ctrl + O**, then **Enter** to save.
+   * Press **Ctrl + X** to exit.
+
+4. Apply the changes to your current terminal session:
+   ```bash
+   source ~/.bashrc
+   ```
+
+### Usage
+Now, no matter what directory you are in, you can simply type:
+```bash
+island
+```
 
 ## Credits & Contributors
 * **stefias** - Creator & Lead Developer (Vibe Coder)
