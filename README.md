@@ -2,7 +2,7 @@
 Dynamic Island, but Music Only and for Linux Mint XFCE Edition (thats where i made it)
 
 I TRIED THIS AND ONLY TESTED IT WITH YouTube Music (website version in firefox: https://music.youtube.com/)
-I TESTED THIS WITH CHROME NOW AND IT WORKS WELL BUT ALSO THE WEBSITE VERSION
+I TESTED THIS WITH CHROME NOW AND IT WORKS WELL BUT ALSO THE WEBSITE VERSION AND I THINK IT WORKS BETTER THAN FIREFOX
 **AND GUYS DONT BE MAD BUT I USED GEMINI AI (HATE ME ALL YOU WANT)**
 
 **Note:** The time could be a bit glitched, but just pause the music in the Dynamic Island then play it again to fix it.
