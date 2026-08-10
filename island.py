@@ -3,8 +3,8 @@ import os
 import urllib.parse
 import urllib.request
 import random
+import time
 import dbus
-import faulthandler
 
 from PyQt5.QtCore import (
     Qt,
@@ -37,7 +37,21 @@ from PyQt5.QtGui import (
     QPen,
 )
 
-faulthandler.enable()
+
+# ============================================================
+# TIME FORMAT
+# ============================================================
+
+def format_time(seconds):
+
+    try:
+        seconds = max(0, int(seconds))
+    except Exception:
+        seconds = 0
+
+    minutes, secs = divmod(seconds, 60)
+
+    return f"{minutes}:{secs:02d}"
 
 
 # ============================================================
@@ -81,6 +95,7 @@ class AnimatedWaveform(QWidget):
         self.timer.stop()
 
         self.target_heights = [5, 5, 5, 5, 5]
+
         self.update()
 
     def animate_bars(self):
@@ -99,9 +114,16 @@ class AnimatedWaveform(QWidget):
             )
 
             if abs(difference) < 1:
-                self.heights[i] = self.target_heights[i]
+
+                self.heights[i] = (
+                    self.target_heights[i]
+                )
+
             else:
-                self.heights[i] += difference * 0.25
+
+                self.heights[i] += (
+                    difference * 0.25
+                )
 
         self.update()
 
@@ -163,6 +185,8 @@ class AnimatedWaveform(QWidget):
                 1.5
             )
 
+        painter.end()
+
 
 # ============================================================
 # ALBUM ART
@@ -182,12 +206,10 @@ class AlbumArtWidget(QWidget):
         )
 
     def set_pixmap(self, pixmap):
-
         self.cached_pixmap = pixmap
         self.update()
 
     def set_radius(self, radius):
-
         self.radius = int(radius)
         self.update()
 
@@ -206,6 +228,7 @@ class AlbumArtWidget(QWidget):
         )
 
         if self.width() <= 0 or self.height() <= 0:
+            painter.end()
             return
 
         path = QPainterPath()
@@ -454,6 +477,8 @@ class IconButton(QPushButton):
                 False
             )
 
+        painter.end()
+
 
 # ============================================================
 # DYNAMIC ISLAND
@@ -534,15 +559,12 @@ class SimpleDynamicIsland(QWidget):
 
             self.bus = dbus.SessionBus()
 
-        except Exception as e:
-
-            print(
-                f"DBus Error: {e}"
-            )
+        except Exception:
 
             self.bus = None
 
         self.mpris_player = None
+        self.mpris_service = None
 
         # ----------------------------------------------------
         # STATE
@@ -555,6 +577,8 @@ class SimpleDynamicIsland(QWidget):
 
         self.track_id = ""
 
+        self.track_signature = ""
+
         self.track_title = "Entropy"
         self.track_artist = "Beach Bunny"
 
@@ -562,16 +586,38 @@ class SimpleDynamicIsland(QWidget):
 
         self.art_request_id = 0
 
-        self.track_length = 0
+        # ----------------------------------------------------
+        # REALTIME POSITION STATE
+        # ----------------------------------------------------
 
-        # Actual MPRIS position in seconds.
-        # Float is used so the progress bar moves smoothly.
-        self.current_position = 0
+        self.track_length = 0.0
+
         self.current_position_float = 0.0
-
-        self.cached_pixmap = None
+        self.current_position = 0.0
 
         self.is_playing = False
+
+        self.playback_rate = 1.0
+
+        self.progress_valid = False
+
+        self.mpris_position = 0.0
+
+        self.position_anchor_time = time.monotonic()
+
+        # ----------------------------------------------------
+        # NEXT/PREVIOUS TRANSITION STATE
+        # ----------------------------------------------------
+
+        self.waiting_for_track_change = False
+
+        self.last_command_time = 0.0
+
+        # ----------------------------------------------------
+        # ART
+        # ----------------------------------------------------
+
+        self.cached_pixmap = None
 
         # ----------------------------------------------------
         # UI
@@ -582,17 +628,8 @@ class SimpleDynamicIsland(QWidget):
         self.setup_animation()
 
         # ----------------------------------------------------
-        # TIMERS
+        # MPRIS POLLING
         # ----------------------------------------------------
-
-        self.smooth_timer = QTimer(self)
-
-        self.smooth_timer.timeout.connect(
-            self.smooth_tick
-        )
-
-        # 100 ms gives smooth playback progression.
-        self.smooth_timer.start(100)
 
         self.poll_timer = QTimer(self)
 
@@ -600,8 +637,23 @@ class SimpleDynamicIsland(QWidget):
             self.poll_media
         )
 
-        # MPRIS is synchronized every second.
-        self.poll_timer.start(1000)
+        self.poll_timer.start(250)
+
+        # ----------------------------------------------------
+        # REALTIME DISPLAY TIMER
+        # ----------------------------------------------------
+
+        self.realtime_timer = QTimer(self)
+
+        self.realtime_timer.timeout.connect(
+            self.update_realtime_position
+        )
+
+        self.realtime_timer.start(50)
+
+        # ----------------------------------------------------
+        # INITIAL READ
+        # ----------------------------------------------------
 
         self.poll_media()
 
@@ -732,7 +784,7 @@ class SimpleDynamicIsland(QWidget):
             )
 
         # ----------------------------------------------------
-        # OPACITY EFFECTS
+        # OPACITY
         # ----------------------------------------------------
 
         self.opacity_widgets = [
@@ -989,10 +1041,6 @@ class SimpleDynamicIsland(QWidget):
                 )
             )
 
-        # ----------------------------------------------------
-        # ALBUM ART
-        # ----------------------------------------------------
-
         self.art_label.setGeometry(
             lerp_rect(
                 self.collapsed_art_geometry(),
@@ -1001,10 +1049,6 @@ class SimpleDynamicIsland(QWidget):
             )
         )
 
-        # ----------------------------------------------------
-        # WAVEFORM
-        # ----------------------------------------------------
-
         self.wave_widget.setGeometry(
             lerp_rect(
                 self.collapsed_wave_geometry(),
@@ -1012,10 +1056,6 @@ class SimpleDynamicIsland(QWidget):
                 t
             )
         )
-
-        # ----------------------------------------------------
-        # TITLE
-        # ----------------------------------------------------
 
         title_start = QRect(
             self.margin + 115,
@@ -1032,10 +1072,6 @@ class SimpleDynamicIsland(QWidget):
             )
         )
 
-        # ----------------------------------------------------
-        # ARTIST
-        # ----------------------------------------------------
-
         artist_start = QRect(
             self.margin + 115,
             self.margin + 38,
@@ -1051,10 +1087,6 @@ class SimpleDynamicIsland(QWidget):
             )
         )
 
-        # ----------------------------------------------------
-        # TIME LEFT
-        # ----------------------------------------------------
-
         time_left_start = QRect(
             self.margin + 25,
             self.margin + 105,
@@ -1069,10 +1101,6 @@ class SimpleDynamicIsland(QWidget):
                 movement_t
             )
         )
-
-        # ----------------------------------------------------
-        # TIME RIGHT
-        # ----------------------------------------------------
 
         time_right_start = QRect(
             self.expanded_w
@@ -1091,10 +1119,6 @@ class SimpleDynamicIsland(QWidget):
             )
         )
 
-        # ----------------------------------------------------
-        # PREVIOUS
-        # ----------------------------------------------------
-
         prev_start = QRect(
             self.margin + 107,
             self.margin + 130,
@@ -1109,10 +1133,6 @@ class SimpleDynamicIsland(QWidget):
                 movement_t
             )
         )
-
-        # ----------------------------------------------------
-        # PLAY
-        # ----------------------------------------------------
 
         play_start = QRect(
             self.margin + 180,
@@ -1129,10 +1149,6 @@ class SimpleDynamicIsland(QWidget):
             )
         )
 
-        # ----------------------------------------------------
-        # NEXT
-        # ----------------------------------------------------
-
         next_start = QRect(
             self.margin + 253,
             self.margin + 130,
@@ -1148,56 +1164,11 @@ class SimpleDynamicIsland(QWidget):
             )
         )
 
-        # ----------------------------------------------------
-        # OPACITY
-        # ----------------------------------------------------
-
         for widget, effect in self.opacity_effects.items():
 
-            effect.setOpacity(
-                t
-            )
+            effect.setOpacity(t)
 
         self.update()
-
-    # ========================================================
-    # SMOOTH POSITION
-    # ========================================================
-
-    def smooth_tick(self):
-
-        if not self.is_playing:
-            return
-
-        if self.track_length <= 0:
-            return
-
-        # Advance the local position smoothly between
-        # the one-second MPRIS synchronization updates.
-        self.current_position_float += 0.1
-
-        if (
-            self.current_position_float
-            >= self.track_length
-        ):
-
-            self.current_position_float = float(
-                self.track_length
-            )
-
-            self.current_position = (
-                self.track_length
-            )
-
-            self.update_progress_ui()
-
-            return
-
-        self.current_position = int(
-            self.current_position_float
-        )
-
-        self.update_progress_ui()
 
     # ========================================================
     # MPRIS
@@ -1213,15 +1184,24 @@ class SimpleDynamicIsland(QWidget):
             services = [
                 s
                 for s in self.bus.list_names()
-                if s.startswith(
+                if str(s).startswith(
                     "org.mpris.MediaPlayer2."
                 )
             ]
 
             if not services:
+
+                self.progress_valid = False
+                self.mpris_player = None
+                self.mpris_service = None
+
                 return
 
             selected_service = None
+
+            # ------------------------------------------------
+            # FIND PLAYING PLAYER
+            # ------------------------------------------------
 
             for service in services:
 
@@ -1251,11 +1231,15 @@ class SimpleDynamicIsland(QWidget):
 
                 except Exception:
 
-                    continue
+                    pass
 
             if selected_service is None:
 
                 selected_service = services[0]
+
+            # ------------------------------------------------
+            # CONNECT PLAYER
+            # ------------------------------------------------
 
             player_proxy = self.bus.get_object(
                 selected_service,
@@ -1271,6 +1255,12 @@ class SimpleDynamicIsland(QWidget):
                 player_proxy,
                 "org.mpris.MediaPlayer2.Player"
             )
+
+            self.mpris_service = selected_service
+
+            # ------------------------------------------------
+            # METADATA
+            # ------------------------------------------------
 
             metadata = props.Get(
                 "org.mpris.MediaPlayer2.Player",
@@ -1309,14 +1299,56 @@ class SimpleDynamicIsland(QWidget):
                 )
             )
 
-            new_track_length = (
-                int(
-                    metadata.get(
-                        "mpris:length",
-                        0
-                    )
+            new_url = str(
+                metadata.get(
+                    "xesam:url",
+                    ""
                 )
-                // 1000000
+            )
+
+            # ------------------------------------------------
+            # LENGTH
+            # ------------------------------------------------
+
+            raw_length = metadata.get(
+                "mpris:length",
+                0
+            )
+
+            try:
+
+                raw_length_int = int(
+                    raw_length
+                )
+
+                new_length = (
+                    raw_length_int
+                    / 1000000.0
+                )
+
+            except Exception:
+
+                new_length = 0.0
+
+            # ------------------------------------------------
+            # REAL TRACK SIGNATURE
+            # ------------------------------------------------
+
+            new_signature = (
+                f"{new_title}\x00"
+                f"{new_artist}\x00"
+                f"{new_url}\x00"
+                f"{new_length:.3f}"
+            )
+
+            track_changed = (
+                bool(self.track_signature)
+                and new_signature
+                != self.track_signature
+            )
+
+            first_track = (
+                not self.track_signature
             )
 
             # ------------------------------------------------
@@ -1325,97 +1357,28 @@ class SimpleDynamicIsland(QWidget):
 
             try:
 
-                pos_sec = (
-                    int(
-                        props.Get(
-                            "org.mpris.MediaPlayer2.Player",
-                            "Position"
-                        )
-                    )
-                    / 1000000.0
+                raw_position = props.Get(
+                    "org.mpris.MediaPlayer2.Player",
+                    "Position"
                 )
 
-                # MPRIS is authoritative. If our smooth
-                # local timer has drifted noticeably, snap
-                # back to the real player position.
-                if abs(
-                    pos_sec
-                    - self.current_position_float
-                ) > 1.0:
+                raw_position_int = int(
+                    raw_position
+                )
 
-                    self.current_position_float = (
-                        pos_sec
-                    )
-
-                else:
-
-                    # Keep the smooth value but prevent it
-                    # from exceeding the actual MPRIS value
-                    # by too much.
-                    if pos_sec >= 0:
-                        self.current_position_float = (
-                            pos_sec
-                            if not self.is_playing
-                            else self.current_position_float
-                        )
-
-                self.current_position = int(
-                    self.current_position_float
+                new_position = (
+                    raw_position_int
+                    / 1000000.0
                 )
 
             except Exception:
 
-                pass
+                new_position = (
+                    self.current_position_float
+                )
 
             # ------------------------------------------------
-            # TRACK LENGTH
-            # ------------------------------------------------
-
-            self.track_length = max(
-                0,
-                new_track_length
-            )
-
-            # If the track changed, use the exact MPRIS
-            # position immediately instead of carrying over
-            # the previous track's position.
-            track_changed = (
-                new_track_id
-                != self.track_id
-            )
-
-            if track_changed:
-
-                try:
-
-                    exact_position = (
-                        int(
-                            props.Get(
-                                "org.mpris.MediaPlayer2.Player",
-                                "Position"
-                            )
-                        )
-                        / 1000000.0
-                    )
-
-                    self.current_position_float = (
-                        max(
-                            0.0,
-                            exact_position
-                        )
-                    )
-
-                    self.current_position = int(
-                        self.current_position_float
-                    )
-
-                except Exception:
-
-                    self.current_position_float = 0.0
-                    self.current_position = 0
-
-            # ------------------------------------------------
-            # PLAYBACK STATUS
+            # STATUS
             # ------------------------------------------------
 
             status = str(
@@ -1429,6 +1392,185 @@ class SimpleDynamicIsland(QWidget):
                 status == "Playing"
             )
 
+            # ------------------------------------------------
+            # RATE
+            # ------------------------------------------------
+
+            try:
+
+                rate = float(
+                    props.Get(
+                        "org.mpris.MediaPlayer2.Player",
+                        "Rate"
+                    )
+                )
+
+                if rate <= 0:
+                    rate = 1.0
+
+            except Exception:
+
+                rate = 1.0
+
+            self.playback_rate = rate
+
+            # ------------------------------------------------
+            # APPLY TRACK INFORMATION
+            # ------------------------------------------------
+
+            if first_track or track_changed:
+
+                self.track_signature = new_signature
+                self.track_id = new_track_id
+
+                self.track_title = new_title
+                self.track_artist = new_artist
+
+                self.title_label.setText(
+                    self.track_title
+                )
+
+                self.artist_label.setText(
+                    self.track_artist
+                )
+
+                if new_length > 0:
+
+                    self.track_length = (
+                        new_length
+                    )
+
+                if (
+                    self.track_length > 0
+                    and 0 <= new_position
+                    <= self.track_length
+                ):
+
+                    self.mpris_position = (
+                        new_position
+                    )
+
+                    self.current_position_float = (
+                        new_position
+                    )
+
+                    self.current_position = (
+                        new_position
+                    )
+
+                    self.position_anchor_time = (
+                        time.monotonic()
+                    )
+
+                    self.progress_valid = True
+
+                else:
+
+                    self.mpris_position = 0.0
+                    self.current_position_float = 0.0
+                    self.current_position = 0.0
+
+                    self.position_anchor_time = (
+                        time.monotonic()
+                    )
+
+                    self.progress_valid = (
+                        self.track_length > 0
+                    )
+
+                self.waiting_for_track_change = False
+
+                # ------------------------------------------------
+                # ARTWORK
+                # ------------------------------------------------
+
+                self.art_url = new_art
+
+                self.art_request_id += 1
+
+                self.load_album_art(
+                    self.art_request_id
+                )
+
+            else:
+
+                # ------------------------------------------------
+                # SAME TRACK
+                # ------------------------------------------------
+
+                self.track_id = new_track_id
+
+                if new_length > 0:
+
+                    self.track_length = (
+                        new_length
+                    )
+
+                # ------------------------------------------------
+                # MPRIS POSITION SYNCHRONIZATION
+                # ------------------------------------------------
+
+                if (
+                    self.track_length > 0
+                    and 0 <= new_position
+                    <= self.track_length
+                ):
+
+                    predicted_position = (
+                        self.get_realtime_position()
+                    )
+
+                    difference = abs(
+                        new_position
+                        - predicted_position
+                    )
+
+                    if difference > 0.75:
+
+                        self.mpris_position = (
+                            new_position
+                        )
+
+                        self.current_position_float = (
+                            new_position
+                        )
+
+                        self.current_position = (
+                            new_position
+                        )
+
+                        self.position_anchor_time = (
+                            time.monotonic()
+                        )
+
+                    elif not self.is_playing:
+
+                        self.mpris_position = (
+                            new_position
+                        )
+
+                        self.current_position_float = (
+                            new_position
+                        )
+
+                        self.current_position = (
+                            new_position
+                        )
+
+                        self.position_anchor_time = (
+                            time.monotonic()
+                        )
+
+                    self.progress_valid = True
+
+                else:
+
+                    self.progress_valid = False
+
+            # ------------------------------------------------
+            # PLAY STATE
+            # ------------------------------------------------
+
             if playing != self.is_playing:
 
                 self.is_playing = playing
@@ -1441,48 +1583,39 @@ class SimpleDynamicIsland(QWidget):
 
                 self.btn_play.update()
 
+                self.position_anchor_time = (
+                    time.monotonic()
+                )
+
                 if playing:
 
                     self.wave_widget.start_animation()
 
                 else:
 
+                    self.current_position_float = (
+                        self.get_realtime_position()
+                    )
+
+                    self.mpris_position = (
+                        self.current_position_float
+                    )
+
+                    self.position_anchor_time = (
+                        time.monotonic()
+                    )
+
                     self.wave_widget.stop_animation()
 
             # ------------------------------------------------
-            # TRACK INFORMATION
+            # ARTWORK UPDATE
             # ------------------------------------------------
 
             if (
-                track_changed
-                or new_title != self.track_title
-                or new_artist != self.track_artist
-            ):
-
-                self.track_id = new_track_id
-
-                self.track_title = new_title
-
-                self.track_artist = new_artist
-
-                self.title_label.setText(
-                    self.track_title
-                )
-
-                self.artist_label.setText(
-                    self.track_artist
-                )
-
-            # ------------------------------------------------
-            # ALBUM ART
-            # ------------------------------------------------
-
-            if (
-                track_changed
-                or (
-                    new_art
-                    and new_art != self.art_url
-                )
+                not track_changed
+                and not first_track
+                and new_art
+                and new_art != self.art_url
             ):
 
                 self.art_url = new_art
@@ -1493,46 +1626,81 @@ class SimpleDynamicIsland(QWidget):
                     self.art_request_id
                 )
 
-            elif (
-                not new_art
-                and track_changed
-            ):
-
-                self.art_url = ""
-
-                self.cached_pixmap = None
-
-                self.art_label.set_pixmap(
-                    None
-                )
-
-                self.wave_widget.set_colors(
-                    QColor(220, 150, 240),
-                    QColor(140, 70, 160)
-                )
-
-            # Keep position inside valid track range.
-            if self.track_length > 0:
-
-                self.current_position_float = max(
-                    0.0,
-                    min(
-                        self.current_position_float,
-                        float(self.track_length)
-                    )
-                )
-
-                self.current_position = int(
-                    self.current_position_float
-                )
+            # ------------------------------------------------
+            # UI
+            # ------------------------------------------------
 
             self.update_progress_ui()
 
-        except Exception as e:
+        except Exception:
+            pass
 
-            print(
-                f"[Error in poll_media]: {e}"
+    # ========================================================
+    # REALTIME POSITION
+    # ========================================================
+
+    def get_realtime_position(self):
+
+        if not self.progress_valid:
+            return self.current_position_float
+
+        position = self.mpris_position
+
+        if self.is_playing:
+
+            elapsed = (
+                time.monotonic()
+                - self.position_anchor_time
             )
+
+            position += (
+                elapsed
+                * self.playback_rate
+            )
+
+        if self.track_length > 0:
+
+            position = max(
+                0.0,
+                min(
+                    self.track_length,
+                    position
+                )
+            )
+
+        else:
+
+            position = max(
+                0.0,
+                position
+            )
+
+        return position
+
+    def update_realtime_position(self):
+
+        if not self.progress_valid:
+            return
+
+        position = self.get_realtime_position()
+
+        self.current_position_float = position
+        self.current_position = position
+
+        # ----------------------------------------------------
+        # END OF TRACK
+        # ----------------------------------------------------
+
+        if (
+            self.track_length > 0
+            and position >= self.track_length
+        ):
+
+            self.current_position_float = (
+                self.track_length
+            )
+
+        self.update_progress_ui()
 
     # ========================================================
     # ALBUM ART
@@ -1653,11 +1821,7 @@ class SimpleDynamicIsland(QWidget):
                     None
                 )
 
-        except Exception as e:
-
-            print(
-                f"[Art Load Exception]: {e}"
-            )
+        except Exception:
 
             if (
                 req_id
@@ -1677,7 +1841,6 @@ class SimpleDynamicIsland(QWidget):
     def update_artwork(self):
 
         if not self.art_label.isVisible():
-
             return
 
         t = max(
@@ -1733,7 +1896,7 @@ class SimpleDynamicIsland(QWidget):
         )
 
     # ========================================================
-    # PROGRESS
+    # PROGRESS UI
     # ========================================================
 
     def update_progress_ui(self):
@@ -1746,49 +1909,22 @@ class SimpleDynamicIsland(QWidget):
             self.track_artist
         )
 
-        # ----------------------------------------------------
-        # CURRENT TIME
-        # ----------------------------------------------------
-
-        position = max(
-            0.0,
-            min(
-                self.current_position_float,
-                float(self.track_length)
-                if self.track_length > 0
-                else 0.0
+        self.time_left.setText(
+            format_time(
+                self.current_position_float
             )
         )
 
-        current_total = int(
-            position
-        )
-
-        curr_m, curr_s = divmod(
-            current_total,
-            60
-        )
-
-        self.time_left.setText(
-            f"{curr_m}:{curr_s:02d}"
-        )
-
-        # ----------------------------------------------------
-        # REMAINING TIME
-        # ----------------------------------------------------
-
         remaining = max(
-            0,
-            self.track_length - current_total
-        )
-
-        rem_m, rem_s = divmod(
-            remaining,
-            60
+            0.0,
+            self.track_length
+            - self.current_position_float
         )
 
         self.time_right.setText(
-            f"-{rem_m}:{rem_s:02d}"
+            "-" + format_time(
+                remaining
+            )
         )
 
         self.update()
@@ -1804,26 +1940,49 @@ class SimpleDynamicIsland(QWidget):
             sender = self.sender()
 
             if not self.mpris_player:
-
                 return
 
             if sender == self.btn_play:
 
                 self.mpris_player.PlayPause()
 
+                QTimer.singleShot(
+                    150,
+                    self.poll_media
+                )
+
             elif sender == self.btn_next:
+
+                self.waiting_for_track_change = True
+
+                self.last_command_time = (
+                    time.monotonic()
+                )
 
                 self.mpris_player.Next()
 
+                QTimer.singleShot(
+                    150,
+                    self.poll_media
+                )
+
             elif sender == self.btn_prev:
+
+                self.waiting_for_track_change = True
+
+                self.last_command_time = (
+                    time.monotonic()
+                )
 
                 self.mpris_player.Previous()
 
-        except Exception as e:
+                QTimer.singleShot(
+                    150,
+                    self.poll_media
+                )
 
-            print(
-                f"[Media Button Error]: {e}"
-            )
+        except Exception:
+            pass
 
     # ========================================================
     # PAINT
@@ -1835,11 +1994,6 @@ class SimpleDynamicIsland(QWidget):
 
         painter.setRenderHint(
             QPainter.Antialiasing
-        )
-
-        painter.fillRect(
-            self.rect(),
-            Qt.transparent
         )
 
         current_w = (
@@ -1926,18 +2080,12 @@ class SimpleDynamicIsland(QWidget):
         # PROGRESS BAR
         # ----------------------------------------------------
 
-        if self.track_length > 0:
+        if (
+            self.progress_valid
+            and self.track_length > 0
+            and self._morph > 0.05
+        ):
 
-            morph = max(
-                0.0,
-                min(
-                    1.0,
-                    self._morph
-                )
-            )
-
-            # The bar itself has a fixed width.
-            # Only its opacity follows the expansion.
             bar_x = (
                 self.margin
                 + 75
@@ -1952,7 +2100,7 @@ class SimpleDynamicIsland(QWidget):
             bar_h = 7
 
             # ------------------------------------------------
-            # BAR BACKGROUND
+            # BACKGROUND
             # ------------------------------------------------
 
             painter.setBrush(
@@ -1960,7 +2108,7 @@ class SimpleDynamicIsland(QWidget):
                     255,
                     255,
                     255,
-                    int(55 * morph)
+                    60
                 )
             )
 
@@ -1969,30 +2117,34 @@ class SimpleDynamicIsland(QWidget):
                 bar_y,
                 bar_w,
                 bar_h,
-                3.5,
-                3.5
+                3,
+                3
             )
 
             # ------------------------------------------------
-            # PLAYBACK PROGRESS
+            # CURRENT REALTIME POSITION
             # ------------------------------------------------
 
-            progress = (
+            current_position = (
                 self.current_position_float
-                / float(self.track_length)
             )
 
-            progress = max(
+            fill_ratio = (
+                current_position
+                / self.track_length
+            )
+
+            fill_ratio = max(
                 0.0,
                 min(
                     1.0,
-                    progress
+                    fill_ratio
                 )
             )
 
             fill_w = int(
                 bar_w
-                * progress
+                * fill_ratio
             )
 
             if fill_w > 0:
@@ -2001,8 +2153,7 @@ class SimpleDynamicIsland(QWidget):
                     QColor(
                         255,
                         255,
-                        255,
-                        int(255 * morph)
+                        255
                     )
                 )
 
@@ -2011,8 +2162,8 @@ class SimpleDynamicIsland(QWidget):
                     bar_y,
                     fill_w,
                     bar_h,
-                    3.5,
-                    3.5
+                    3,
+                    3
                 )
 
         painter.end()
@@ -2024,11 +2175,9 @@ class SimpleDynamicIsland(QWidget):
     def mousePressEvent(self, event):
 
         if self.is_animating:
-
             return
 
         if event.button() != Qt.LeftButton:
-
             return
 
         self.is_animating = True
@@ -2108,7 +2257,6 @@ class SimpleDynamicIsland(QWidget):
         self.wave_widget.show()
 
         for widget in self.opacity_widgets:
-
             widget.show()
 
         font_t = QFont(
@@ -2170,7 +2318,6 @@ class SimpleDynamicIsland(QWidget):
         self.wave_widget.show()
 
         for widget in self.opacity_widgets:
-
             widget.show()
 
         self.update_animated_content()
@@ -2206,7 +2353,6 @@ class SimpleDynamicIsland(QWidget):
             )
 
             for widget in self.opacity_widgets:
-
                 widget.hide()
 
             self.art_label.show()
@@ -2225,11 +2371,11 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
 
+    island = SimpleDynamicIsland()
+
     # --------------------------------------------------------
     # INITIAL COLLAPSED STATE
     # --------------------------------------------------------
-
-    island = SimpleDynamicIsland()
 
     island._morph = 0.0
     island.is_expanded = False
@@ -2246,7 +2392,6 @@ if __name__ == "__main__":
     island.wave_widget.show()
 
     for widget in island.opacity_widgets:
-
         widget.hide()
 
     island.update_artwork()
