@@ -3,6 +3,7 @@ import os
 import urllib.parse
 import urllib.request
 import random
+import threading
 import dbus
 from PyQt5.QtCore import Qt, QPropertyAnimation, QRect, QRectF, QEasingCurve, QTimer, QSize
 import faulthandler
@@ -259,24 +260,29 @@ class SimpleDynamicIsland(QWidget):
                 self.btn_play.update()
                 self.wave_widget.stop_animation()
 
-            # Handle track and art updates robustly on track change
-            track_changed = (new_track_id != self.track_id)
-            if track_changed or new_title != self.track_title or new_artist != self.track_artist:
+            # Enhanced change detection checking track ID, title, artist, AND art URL
+            is_track_changed = (
+                new_track_id != self.track_id or 
+                new_title != self.track_title or 
+                new_artist != self.track_artist or 
+                new_art != self.art_url
+            )
+
+            if is_track_changed:
                 self.track_id = new_track_id
                 self.track_title = new_title
                 self.track_artist = new_artist
-
-            if track_changed or (new_art and new_art != self.art_url):
                 self.art_url = new_art
                 self.art_request_id += 1
-                self.load_album_art(self.art_request_id)
-            elif not new_art and track_changed:
-                self.art_url = ""
-                self.cached_pixmap = None
-                self.wave_widget.set_colors(QColor(220, 150, 240), QColor(140, 70, 160))
+
+                if self.art_url:
+                    self.load_album_art(self.art_request_id)
+                else:
+                    self.cached_pixmap = None
+                    self.wave_widget.set_colors(QColor(220, 150, 240), QColor(140, 70, 160))
+                    self.apply_loaded_art()
 
             if self.is_expanded:
-                self.art_label.setPixmap(self.get_rounded_pixmap(76, 20))
                 self.update_progress_ui()
             else:
                 self.art_label.setPixmap(self.get_rounded_pixmap(26, 6))
@@ -285,51 +291,54 @@ class SimpleDynamicIsland(QWidget):
             print(f"[Error in poll_media]: {e}")
 
     def load_album_art(self, req_id):
-        try:
-            if not self.art_url:
-                self.cached_pixmap = None
-                return
+        if not self.art_url:
+            self.cached_pixmap = None
+            return
 
-            loaded_pixmap = None
-            if self.art_url.startswith('file://'):
-                path = urllib.parse.unquote(self.art_url[7:])
-                img = QImage(path)
-                if not img.isNull():
-                    loaded_pixmap = QPixmap.fromImage(img)
-            elif self.art_url.startswith('http://') or self.art_url.startswith('https://'):
-                req = urllib.request.Request(self.art_url, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, timeout=3) as response:
-                    data = response.read()
-                    img = QImage()
-                    if img.loadFromData(data):
+        def background_load():
+            try:
+                loaded_pixmap = None
+                if self.art_url.startswith('file://'):
+                    path = urllib.parse.unquote(self.art_url[7:])
+                    img = QImage(path)
+                    if not img.isNull():
                         loaded_pixmap = QPixmap.fromImage(img)
-            else:
-                img = QImage(self.art_url)
-                if not img.isNull():
-                    loaded_pixmap = QPixmap.fromImage(img)
-            
-            if req_id != self.art_request_id:
-                return
-
-            if loaded_pixmap and not loaded_pixmap.isNull():
-                self.cached_pixmap = loaded_pixmap
-                c1, c2 = self.extract_colors_from_pixmap()
-                self.wave_widget.set_colors(c1, c2)
-            else:
-                self.cached_pixmap = None
-
-            if self.is_expanded:
-                self.art_label.setPixmap(self.get_rounded_pixmap(76, 20))
-            else:
-                self.art_label.setPixmap(self.get_rounded_pixmap(26, 6))
-        except Exception as e:
-            print(f"[Art Load Exception]: {e}")
-            if req_id == self.art_request_id:
-                self.cached_pixmap = None
-                if self.is_expanded:
-                    self.art_label.setPixmap(self.get_rounded_pixmap(76, 20))
+                elif self.art_url.startswith('http://') or self.art_url.startswith('https://'):
+                    req = urllib.request.Request(self.art_url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, timeout=3) as response:
+                        data = response.read()
+                        img = QImage()
+                        if img.loadFromData(data):
+                            loaded_pixmap = QPixmap.fromImage(img)
                 else:
-                    self.art_label.setPixmap(self.get_rounded_pixmap(26, 6))
+                    img = QImage(self.art_url)
+                    if not img.isNull():
+                        loaded_pixmap = QPixmap.fromImage(img)
+                
+                if req_id != self.art_request_id:
+                    return
+
+                if loaded_pixmap and not loaded_pixmap.isNull():
+                    self.cached_pixmap = loaded_pixmap
+                    c1, c2 = self.extract_colors_from_pixmap()
+                    self.wave_widget.set_colors(c1, c2)
+                else:
+                    self.cached_pixmap = None
+
+                QTimer.singleShot(0, self.apply_loaded_art)
+            except Exception as e:
+                print(f"[Art Load Exception]: {e}")
+                if req_id == self.art_request_id:
+                    self.cached_pixmap = None
+                    QTimer.singleShot(0, self.apply_loaded_art)
+
+        threading.Thread(target=background_load, daemon=True).start()
+
+    def apply_loaded_art(self):
+        if self.is_expanded:
+            self.art_label.setPixmap(self.get_rounded_pixmap(76, 20))
+        else:
+            self.art_label.setPixmap(self.get_rounded_pixmap(26, 6))
 
     def extract_colors_from_pixmap(self):
         if not self.cached_pixmap or self.cached_pixmap.isNull():
