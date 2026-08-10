@@ -43,6 +43,12 @@ pip install PyQt5 dbus-python
 ```bash
 python3 island.py
 ```
+Or, if you renamed the .py file, you can install it using:
+
+```bash
+python3 yourrenamedfilesname.py
+```
+
 ## Credits & Contributors
 * **stefias** - Creator & Lead Developer (Vibe Coder)
 * **Gemini** - AI Assistant (helped with code debugging and structure)
